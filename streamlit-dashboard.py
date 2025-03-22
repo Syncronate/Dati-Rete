@@ -2,553 +2,387 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import os
-import glob
 from datetime import datetime, timedelta
-import pytz
-import time
-import numpy as np
-import folium
-from streamlit_folium import folium_static
+import os
 
-# Page configuration
+# Set page configuration
 st.set_page_config(
-    page_title="Weather Monitoring Dashboard",
-    page_icon="🌦️",
+    page_title="Monitoraggio Stazioni Meteo",
+    page_icon="🌤️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS
+# Add custom CSS
 st.markdown("""
 <style>
     .main-header {
-        font-size: 2.5rem;
+        font-size: 36px;
         font-weight: bold;
         color: #1E88E5;
-        margin-bottom: 1rem;
+        text-align: center;
+        margin-bottom: 20px;
     }
     .sub-header {
-        font-size: 1.5rem;
+        font-size: 24px;
         font-weight: bold;
         color: #0D47A1;
-        margin-top: 1rem;
+        margin-top: 30px;
+        margin-bottom: 10px;
     }
-    .data-container {
-        background-color: #f0f2f6;
+    .card {
+        padding: 20px;
         border-radius: 10px;
-        padding: 1rem;
-        margin-bottom: 1rem;
+        background-color: #f8f9fa;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        margin-bottom: 20px;
     }
     .metric-container {
-        background-color: #ffffff;
-        border-radius: 5px;
-        padding: 0.5rem;
-        margin: 0.5rem 0;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        display: flex;
+        justify-content: space-between;
+        flex-wrap: wrap;
+    }
+    .metric-card {
+        background-color: white;
+        border-radius: 8px;
+        padding: 15px;
+        margin-bottom: 10px;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        text-align: center;
+    }
+    .metric-value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #1E88E5;
     }
     .metric-label {
-        font-weight: bold;
-        color: #555;
+        font-size: 14px;
+        color: #616161;
     }
-    .success-value {
-        color: #4CAF50;
-        font-weight: bold;
-    }
-    .warning-value {
-        color: #FF9800;
-        font-weight: bold;
-    }
-    .danger-value {
-        color: #F44336;
-        font-weight: bold;
-    }
-    .info-text {
-        color: #555;
-        font-size: 0.85rem;
-    }
-    .last-updated {
-        font-style: italic;
-        font-size: 0.8rem;
-        color: #777;
-        text-align: right;
+    .footer {
+        text-align: center;
+        margin-top: 40px;
+        color: #9E9E9E;
+        font-size: 12px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Helper functions
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def load_latest_data():
-    """Load the most recent weather data CSV file"""
+def load_data():
+    """Load data from the CSV file"""
+    file_path = "dati_meteo_stazioni.csv"
+    
+    if not os.path.exists(file_path):
+        st.error(f"File {file_path} non trovato. Assicurati che lo script di raccolta dati sia in esecuzione.")
+        return None
+    
     try:
-        # Get list of CSV files with the specific naming pattern
-        csv_files = glob.glob("dati_meteo_stazioni_selezionate_*.csv")
-
-        if not csv_files:
-            return None
-
-        # Find the most recent file by sorting
-        latest_file = max(csv_files)
-
-        # Read the CSV file
-        df = pd.read_csv(latest_file)
-
-        # Convert timestamp to datetime
-        df['Timestamp'] = pd.to_datetime(df['Timestamp'])
-
-        # Convert 'Valore' column to numeric, coercing errors to NaN and then drop NaN rows
-        df['Valore'] = pd.to_numeric(df['Valore'], errors='coerce')
-        df.dropna(subset=['Valore'], inplace=True)
-
-
-        # Create a more readable sensor description by combining type and description
-        df['Sensor'] = df['Descrizione Sensore'] + " (" + df['Sensore Tipo'].astype(str) + ")"
-
+        df = pd.read_csv(file_path)
+        # Convert Data_Ora to datetime
+        df['Data_Ora'] = pd.to_datetime(df['Data_Ora'], format='%d/%m/%Y %H:%M')
         return df
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"Errore nel caricamento dei dati: {e}")
         return None
 
-def get_sensor_color(sensor_type):
-    """Return consistent color for specific sensor types"""
-    color_map = {
-        0: "#1E88E5",  # Rain
-        1: "#F44336",  # Temperature
-        5: "#4CAF50",  # Humidity
-        6: "#FF9800",  # Wind
-        9: "#9C27B0",  # River level
-        10: "#FFEB3B", # Pressure
-        100: "#795548" # Other
-    }
-    return color_map.get(sensor_type, "#607D8B")
+def create_time_filter(df):
+    """Create time filter widgets"""
+    st.sidebar.markdown("### Filtro Temporale")
+    
+    # Get min and max dates from data
+    min_date = df['Data_Ora'].min().date()
+    max_date = df['Data_Ora'].max().date()
+    
+    # Date range selector
+    col1, col2 = st.sidebar.columns(2)
+    with col1:
+        start_date = st.date_input("Data Inizio", 
+                                  value=max_date - timedelta(days=1),
+                                  min_value=min_date,
+                                  max_value=max_date)
+    with col2:
+        end_date = st.date_input("Data Fine", 
+                               value=max_date,
+                               min_value=min_date,
+                               max_value=max_date)
+    
+    # Convert back to datetime for filtering
+    start_datetime = datetime.combine(start_date, datetime.min.time())
+    end_datetime = datetime.combine(end_date, datetime.max.time())
+    
+    # Filter data based on selected date range
+    filtered_df = df[(df['Data_Ora'] >= start_datetime) & (df['Data_Ora'] <= end_datetime)]
+    
+    return filtered_df
 
-def get_station_coordinates():
-    """Return coordinates for the weather stations (approximated for this example)"""
-    # These are approximated coordinates - replace with actual coordinates
+def identify_data_columns(df):
+    """Identify different types of data columns"""
+    columns = df.columns.tolist()
+    
+    # Remove 'Data_Ora' from columns
+    if 'Data_Ora' in columns:
+        columns.remove('Data_Ora')
+    
+    # Group columns by type
+    temperature_cols = [col for col in columns if 'Temperatura' in col or 'temp' in col.lower()]
+    precipitation_cols = [col for col in columns if 'Precipitazione' in col or 'pioggia' in col.lower() or 'mm' in col.lower()]
+    wind_cols = [col for col in columns if 'Vento' in col or 'vento' in col.lower()]
+    humidity_cols = [col for col in columns if 'Umidità' in col or 'umid' in col.lower()]
+    pressure_cols = [col for col in columns if 'Pressione' in col or 'press' in col.lower()]
+    
+    # Other columns
+    other_cols = [col for col in columns if col not in temperature_cols + precipitation_cols + 
+                 wind_cols + humidity_cols + pressure_cols]
+    
     return {
-        "Misa": (43.6166, 13.1663),
-        "Pianello di Ostra": (43.6066, 13.1498),
-        "Nevola": (43.6497, 13.0716),
-        "Barbara": (43.6216, 13.0588),
-        "Serra dei Conti": (43.5498, 13.0475),
-        "Arcevia": (43.5002, 12.9431)
+        'temperature': temperature_cols,
+        'precipitation': precipitation_cols,
+        'wind': wind_cols,
+        'humidity': humidity_cols,
+        'pressure': pressure_cols,
+        'other': other_cols
     }
 
-def get_sensor_description(sensor_type):
-    """Return descriptive name for sensor type"""
-    descriptions = {
-        0: "Rainfall",
-        1: "Temperature",
-        5: "Humidity",
-        6: "Wind",
-        9: "River Level",
-        10: "Pressure",
-        100: "Other"
+def plot_time_series(df, columns, title, y_axis_title, color_sequence=None):
+    """Create a time series plot for selected columns"""
+    if not columns:
+        return None
+    
+    fig = go.Figure()
+    
+    for i, col in enumerate(columns):
+        color = color_sequence[i % len(color_sequence)] if color_sequence else None
+        
+        # Replace 'N/A' with None for plotting
+        valid_data = df.copy()
+        valid_data.loc[valid_data[col] == 'N/A', col] = None
+        valid_data[col] = pd.to_numeric(valid_data[col], errors='coerce')
+        
+        fig.add_trace(
+            go.Scatter(
+                x=valid_data['Data_Ora'],
+                y=valid_data[col],
+                name=col,
+                line=dict(color=color),
+                mode='lines+markers'
+            )
+        )
+    
+    fig.update_layout(
+        title=title,
+        xaxis_title='Data e Ora',
+        yaxis_title=y_axis_title,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        height=400,
+        margin=dict(l=10, r=10, t=50, b=30),
+        hovermode="x unified"
+    )
+    
+    return fig
+
+def display_latest_metrics(df, data_cols):
+    """Display the latest metrics in cards"""
+    if df.empty:
+        return
+    
+    latest_data = df.iloc[-1].to_dict()
+    
+    # Get the latest timestamp
+    latest_time = latest_data['Data_Ora']
+    st.markdown(f"### Ultimo aggiornamento: {latest_time.strftime('%d/%m/%Y %H:%M')}")
+    
+    # Create metric cards for different data types
+    categories = {
+        'Temperatura': data_cols['temperature'],
+        'Precipitazioni': data_cols['precipitation'],
+        'Vento': data_cols['wind'],
+        'Umidità': data_cols['humidity'],
+        'Pressione': data_cols['pressure']
     }
-    return descriptions.get(sensor_type, f"Sensor Type {sensor_type}")
+    
+    for category, cols in categories.items():
+        if cols:
+            st.markdown(f"#### {category}")
+            cols_per_row = 3
+            for i in range(0, len(cols), cols_per_row):
+                curr_cols = cols[i:i+cols_per_row]
+                cols_for_ui = st.columns(len(curr_cols))
+                
+                for j, col in enumerate(curr_cols):
+                    value = latest_data.get(col)
+                    if value == 'N/A':
+                        value = "N/A"
+                    elif isinstance(value, (int, float)) or (isinstance(value, str) and value.replace('.', '', 1).isdigit()):
+                        try:
+                            value = float(value)
+                            value = f"{value:.1f}"
+                        except:
+                            pass
+                    
+                    # Extract unit from column name if present
+                    unit = ""
+                    if "(" in col and ")" in col:
+                        unit = col.split("(")[1].split(")")[0]
+                    
+                    # Pretty display name
+                    display_name = col.split(" (")[0] if " (" in col else col
+                    
+                    with cols_for_ui[j]:
+                        st.markdown(
+                            f"""
+                            <div class="metric-card">
+                                <div class="metric-value">{value} {unit}</div>
+                                <div class="metric-label">{display_name}</div>
+                            </div>
+                            """,
+                            unsafe_allow_html=True
+                        )
 
-def get_sensor_unit(df, sensor_type):
-    """Get unit of measurement for a specific sensor type"""
-    sensor_data = df[df['Sensore Tipo'] == sensor_type]
-    if len(sensor_data) > 0:
-        unit = sensor_data['Unità di Misura'].iloc[0]
-        return unit
-    return ""
-
-def get_threshold_color(value, sensor_type):
-    """Return color based on threshold for specific sensor types"""
-    if sensor_type == 0:  # Rainfall
-        if value > 10:
-            return "danger-value"
-        elif value > 5:
-            return "warning-value"
-        return "success-value"
-    elif sensor_type == 1:  # Temperature
-        if value > 30 or value < 0:
-            return "danger-value"
-        elif value > 25 or value < 5:
-            return "warning-value"
-        return "success-value"
-    elif sensor_type == 9:  # River level
-        if value > 3:
-            return "danger-value"
-        elif value > 2:
-            return "warning-value"
-        return "success-value"
-    else:
-        return "success-value"
-
-# Sidebar section
-st.sidebar.markdown("<div class='sub-header'>Dashboard Controls</div>", unsafe_allow_html=True)
-
-# Load data
-df = load_latest_data()
-
-if df is not None:
-    # Get unique stations and sensor types for filtering
-    all_stations = sorted(df['Stazione'].unique())
-    all_sensor_types = sorted(df['Sensore Tipo'].unique())
-
-    # Sidebar filters
-    selected_stations = st.sidebar.multiselect(
-        "Select Stations",
-        all_stations,
-        default=all_stations
+def create_dashboard():
+    """Create the Streamlit dashboard"""
+    # Title
+    st.markdown('<div class="main-header">Dashboard Monitoraggio Stazioni Meteo</div>', unsafe_allow_html=True)
+    
+    # Load data
+    df = load_data()
+    if df is None:
+        return
+    
+    # Sidebar
+    st.sidebar.markdown("## Opzioni Dashboard")
+    
+    # Auto refresh option
+    refresh_interval = st.sidebar.selectbox(
+        "Aggiornamento automatico",
+        [None, 1, 5, 15, 30, 60],
+        format_func=lambda x: "Disattivato" if x is None else f"Ogni {x} minuti"
     )
-
-    selected_sensor_types = st.sidebar.multiselect(
-        "Select Sensor Types",
-        all_sensor_types,
-        default=all_sensor_types,
-        format_func=get_sensor_description
-    )
-
-    # Time range selector
-    min_date = df['Timestamp'].min().date()
-    max_date = df['Timestamp'].max().date()
-
-    date_range = st.sidebar.slider(
-        "Select Date Range",
-        min_value=min_date,
-        max_value=max_date,
-        value=(min_date, max_date)
-    )
-
-    # Convert dates to datetime for filtering
-    start_date = datetime.combine(date_range[0], datetime.min.time())
-    end_date = datetime.combine(date_range[1], datetime.max.time())
-
-    # Filter data
-    filtered_df = df[
-        (df['Stazione'].isin(selected_stations)) &
-        (df['Sensore Tipo'].isin(selected_sensor_types)) &
-        (df['Timestamp'] >= start_date) &
-        (df['Timestamp'] <= end_date)
+    
+    if refresh_interval:
+        st.sidebar.markdown(f"La dashboard si aggiornerà ogni {refresh_interval} minuti.")
+        st.experimental_memo.clear()
+        
+    # Time filter
+    filtered_df = create_time_filter(df)
+    
+    # Identify data columns
+    data_cols = identify_data_columns(filtered_df)
+    
+    # Overview section - Latest metrics
+    st.markdown('<div class="sub-header">Panoramica Attuale</div>', unsafe_allow_html=True)
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    display_latest_metrics(filtered_df, data_cols)
+    st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Create charts section
+    st.markdown('<div class="sub-header">Grafici Temporali</div>', unsafe_allow_html=True)
+    
+    # Define color sequences for different chart types
+    color_sequences = {
+        'temperature': px.colors.sequential.Reds,
+        'precipitation': px.colors.sequential.Blues,
+        'wind': px.colors.sequential.Greens,
+        'humidity': px.colors.sequential.Purples,
+        'pressure': px.colors.sequential.Oranges,
+        'other': px.colors.qualitative.Plotly
+    }
+    
+    # Plot temperature data
+    if data_cols['temperature']:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        temp_fig = plot_time_series(
+            filtered_df, 
+            data_cols['temperature'], 
+            'Andamento della Temperatura', 
+            'Temperatura (°C)',
+            color_sequences['temperature']
+        )
+        st.plotly_chart(temp_fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Plot precipitation data
+    if data_cols['precipitation']:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        precip_fig = plot_time_series(
+            filtered_df, 
+            data_cols['precipitation'], 
+            'Andamento delle Precipitazioni', 
+            'Precipitazioni (mm)',
+            color_sequences['precipitation']
+        )
+        st.plotly_chart(precip_fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Plot other data types
+    other_data_types = [
+        ('wind', 'Andamento del Vento', 'Velocità del Vento (km/h)'),
+        ('humidity', 'Andamento dell\'Umidità', 'Umidità (%)'),
+        ('pressure', 'Andamento della Pressione Atmosferica', 'Pressione (hPa)'),
     ]
-
-    # Refresh rate
-    refresh_interval = st.sidebar.slider(
-        "Auto-refresh interval (seconds)",
-        min_value=15,
-        max_value=300,
-        value=60,
-        step=15
-    )
-
-    # Display options
-    display_mode = st.sidebar.radio(
-        "Display Mode",
-        ["Combined View", "Station View", "Sensor View"]
-    )
-
-    # Add auto-refresh checkbox
-    auto_refresh = st.sidebar.checkbox("Enable Auto-Refresh", value=True)
-
-    # About section
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("<div class='sub-header'>About</div>", unsafe_allow_html=True)
-    st.sidebar.info(
-        """
-        This dashboard visualizes weather data from multiple stations in the Marche region.
-        Data is collected every 5 minutes and includes rainfall, temperature, humidity, wind,
-        and river levels.
-        """
-    )
-
-    # Main content
-    st.markdown("<div class='main-header'>Weather Monitoring Dashboard</div>", unsafe_allow_html=True)
-
-    # Display last updated time
-    last_updated = df['Timestamp'].max()
+    
+    for data_type, title, y_axis in other_data_types:
+        if data_cols[data_type]:
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            fig = plot_time_series(
+                filtered_df, 
+                data_cols[data_type], 
+                title, 
+                y_axis,
+                color_sequences[data_type]
+            )
+            st.plotly_chart(fig, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Plot other columns if any
+    if data_cols['other']:
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### Altri Dati")
+        
+        # Allow selection of columns to display
+        selected_cols = st.multiselect(
+            "Seleziona parametri da visualizzare",
+            data_cols['other'],
+            default=data_cols['other'][:min(3, len(data_cols['other']))]
+        )
+        
+        if selected_cols:
+            other_fig = plot_time_series(
+                filtered_df, 
+                selected_cols, 
+                'Altri Parametri', 
+                'Valore',
+                color_sequences['other']
+            )
+            st.plotly_chart(other_fig, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Add a data table section
+    with st.expander("Visualizza Dati Grezzi"):
+        st.dataframe(
+            filtered_df.sort_values('Data_Ora', ascending=False),
+            use_container_width=True
+        )
+        
+        # Add download button
+        csv = filtered_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            "Scarica CSV",
+            csv,
+            "dati_meteo_filtrati.csv",
+            "text/csv",
+            key='download-csv'
+        )
+    
+    # Footer
     st.markdown(
-        f"<div class='last-updated'>Last updated: {last_updated.strftime('%Y-%m-%d %H:%M:%S')}</div>",
+        '<div class="footer">Dashboard creata per il monitoraggio delle stazioni meteo. '
+        'Ultimo aggiornamento: ' + datetime.now().strftime('%d/%m/%Y %H:%M') + '</div>',
         unsafe_allow_html=True
     )
-
-    # Current conditions section
-    st.markdown("<div class='sub-header'>Current Conditions</div>", unsafe_allow_html=True)
-
-    if display_mode == "Combined View":
-        # Display current conditions across all stations
-        latest_data = filtered_df.sort_values('Timestamp').groupby(['Stazione', 'Sensore Tipo']).last().reset_index()
-
-        current_metrics = st.columns(len(selected_stations))
-
-        for i, station in enumerate(selected_stations):
-            if station in latest_data['Stazione'].values:
-                station_data = latest_data[latest_data['Stazione'] == station]
-
-                with current_metrics[i]:
-                    st.markdown(f"<div class='metric-container'><h3>{station}</h3>", unsafe_allow_html=True)
-
-                    for sensor_type in selected_sensor_types:
-                        sensor_rows = station_data[station_data['Sensore Tipo'] == sensor_type]
-
-                        if not sensor_rows.empty:
-                            sensor_row = sensor_rows.iloc[0]
-                            value = sensor_row['Valore']
-                            unit = sensor_row['Unità di Misura']
-                            description = sensor_row['Descrizione Sensore']
-
-                            color_class = get_threshold_color(value, sensor_type)
-
-                            st.markdown(
-                                f"""
-                                <div>
-                                    <span class='metric-label'>{description}:</span>
-                                    <span class='{color_class}'>{value} {unit}</span>
-                                </div>
-                                """,
-                                unsafe_allow_html=True
-                            )
-
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-    # Map section
-    st.markdown("<div class='sub-header'>Station Locations</div>", unsafe_allow_html=True)
-
-    station_coords = get_station_coordinates()
-
-    # Create a base map
-    m = folium.Map(location=[43.55, 13.05], zoom_start=11)
-
-    # Add markers for each station
-    for station in selected_stations:
-        if station in station_coords:
-            lat, lon = station_coords[station]
-
-            # Get latest data for this station to display in popup
-            station_data = filtered_df[filtered_df['Stazione'] == station].sort_values('Timestamp').groupby('Sensore Tipo').last()
-
-            popup_html = f"<b>{station}</b><br>"
-
-            for _, row in station_data.iterrows():
-                popup_html += f"{row['Descrizione Sensore']}: {row['Valore']} {row['Unità di Misura']}<br>"
-
-            folium.Marker(
-                location=[lat, lon],
-                popup=folium.Popup(popup_html, max_width=300),
-                tooltip=station,
-                icon=folium.Icon(color="blue", icon="cloud")
-            ).add_to(m)
-
-    # Display the map
-    folium_static(m)
-
-    # Trend charts section
-    st.markdown("<div class='sub-header'>Weather Trends</div>", unsafe_allow_html=True)
-
-    chart_tabs = st.tabs([get_sensor_description(sensor_type) for sensor_type in selected_sensor_types])
-
-    for i, sensor_type in enumerate(selected_sensor_types):
-        with chart_tabs[i]:
-            sensor_df = filtered_df[filtered_df['Sensore Tipo'] == sensor_type]
-
-            if not sensor_df.empty:
-                unit = get_sensor_unit(sensor_df, sensor_type)
-
-                # Line chart for this sensor type across all selected stations
-                fig = px.line(
-                    sensor_df,
-                    x='Timestamp',
-                    y='Valore',
-                    color='Stazione',
-                    title=f"{get_sensor_description(sensor_type)} over time",
-                    labels={'Valore': f'Value ({unit})', 'Timestamp': 'Time'}
-                )
-
-                # Improve chart appearance
-                fig.update_layout(
-                    xaxis_title="Time",
-                    yaxis_title=f"Value ({unit})",
-                    legend_title="Station",
-                    height=500,
-                    hovermode="x unified"
-                )
-
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Statistics for this sensor type
-                stats_cols = st.columns(4)
-
-                # Group by station and calculate statistics
-                stats = sensor_df.groupby('Stazione')['Valore'].agg(['min', 'max', 'mean', 'std']).reset_index()
-                stats['mean'] = stats['mean'].round(2)
-                stats['std'] = stats['std'].round(2)
-
-                with stats_cols[0]:
-                    st.metric("Average", f"{stats['mean'].mean():.2f} {unit}")
-
-                with stats_cols[1]:
-                    st.metric("Min", f"{stats['min'].min():.2f} {unit}")
-
-                with stats_cols[2]:
-                    st.metric("Max", f"{stats['max'].max():.2f} {unit}")
-
-                with stats_cols[3]:
-                    # Find station with highest value
-                    max_idx = stats['max'].idxmax()
-                    max_station = stats.loc[max_idx, 'Stazione']
-                    st.metric("Peak Station", max_station)
-
-                # Table with statistics by station
-                st.dataframe(
-                    stats.rename(columns={
-                        'min': 'Minimum',
-                        'max': 'Maximum',
-                        'mean': 'Average',
-                        'std': 'Std Dev'
-                    })
-                )
-            else:
-                st.warning(f"No data available for {get_sensor_description(sensor_type)}")
-
-    # Station-specific analysis (if selected)
-    if display_mode == "Station View":
-        st.markdown("<div class='sub-header'>Station Analysis</div>", unsafe_allow_html=True)
-
-        station_tabs = st.tabs(selected_stations)
-
-        for i, station in enumerate(selected_stations):
-            with station_tabs[i]:
-                station_df = filtered_df[filtered_df['Stazione'] == station]
-
-                if not station_df.empty:
-                    # Create a grid of small metrics for this station
-                    metrics = {}
-
-                    for sensor_type in selected_sensor_types:
-                        sensor_data = station_df[station_df['Sensore Tipo'] == sensor_type]
-
-                        if not sensor_data.empty:
-                            latest = sensor_data.sort_values('Timestamp').iloc[-1]
-                            metrics[sensor_type] = {
-                                'value': latest['Valore'],
-                                'unit': latest['Unità di Misura'],
-                                'description': latest['Descrizione Sensore']
-                            }
-
-                    # Display metrics in columns
-                    metric_cols = st.columns(min(3, len(metrics)))
-
-                    for i, (sensor_type, data) in enumerate(metrics.items()):
-                        col_idx = i % 3
-
-                        with metric_cols[col_idx]:
-                            st.metric(
-                                data['description'],
-                                f"{data['value']} {data['unit']}"
-                            )
-
-                    # Time series for all sensors for this station
-                    pivot_df = station_df.pivot_table(
-                        index='Timestamp',
-                        columns='Descrizione Sensore',
-                        values='Valore'
-                    )
-
-                    # Create composite chart
-                    fig = go.Figure()
-
-                    for sensor_type in selected_sensor_types:
-                        sensor_data = station_df[station_df['Sensore Tipo'] == sensor_type]
-
-                        if not sensor_data.empty:
-                            description = sensor_data['Descrizione Sensore'].iloc[0]
-
-                            fig.add_trace(
-                                go.Scatter(
-                                    x=sensor_data['Timestamp'],
-                                    y=sensor_data['Valore'],
-                                    mode='lines',
-                                    name=description,
-                                    line=dict(color=get_sensor_color(sensor_type))
-                                )
-                            )
-
-                    fig.update_layout(
-                        title=f"All Measurements for {station}",
-                        xaxis_title="Time",
-                        height=500,
-                        hovermode="x unified"
-                    )
-
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning(f"No data available for {station}")
-
-    # Sensor-specific analysis (if selected)
-    if display_mode == "Sensor View":
-        st.markdown("<div class='sub-header'>Sensor Analysis</div>", unsafe_allow_html=True)
-
-        for sensor_type in selected_sensor_types:
-            st.markdown(f"<div class='sub-header'>{get_sensor_description(sensor_type)}</div>", unsafe_allow_html=True)
-
-            sensor_df = filtered_df[filtered_df['Sensore Tipo'] == sensor_type]
-
-            if not sensor_df.empty:
-                # Latest values across stations
-                latest_vals = sensor_df.sort_values('Timestamp').groupby('Stazione').last().reset_index()
-
-                unit = latest_vals['Unità di Misura'].iloc[0]
-
-                # Bar chart of current values
-                fig = px.bar(
-                    latest_vals,
-                    x='Stazione',
-                    y='Valore',
-                    title=f"Current {get_sensor_description(sensor_type)} Values",
-                    labels={'Valore': f'Value ({unit})', 'Stazione': 'Station'},
-                    color='Valore',
-                    color_continuous_scale=px.colors.sequential.Blues
-                )
-
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-
-                # Heatmap of values over time if we have enough data
-                if len(sensor_df) > 10:
-                    # Create pivot table for heatmap (Station × Time)
-                    heatmap_df = sensor_df.copy()
-                    # Round timestamps to nearest hour for better visualization
-                    heatmap_df['hour'] = heatmap_df['Timestamp'].dt.floor('H')
-
-                    pivot = heatmap_df.pivot_table(
-                        index='Stazione',
-                        columns='hour',
-                        values='Valore',
-                        aggfunc='mean'
-                    )
-
-                    fig = px.imshow(
-                        pivot,
-                        title=f"{get_sensor_description(sensor_type)} Heatmap",
-                        labels=dict(x="Time", y="Station", color=f"Value ({unit})"),
-                        color_continuous_scale="Blues"
-                    )
-
-                    fig.update_layout(height=400)
-                    st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning(f"No data available for {get_sensor_description(sensor_type)}")
-
-    # Setup auto-refresh mechanism
-    if auto_refresh:
-        time_placeholder = st.empty()
-        counter = refresh_interval
-
-        # Only show the countdown if we're on the app page (not being rendered statically)
-        if not st.session_state.get('rendering_docs', False):
-            time_placeholder.markdown(f"Auto-refreshing in {counter} seconds...")
-
-            # Schedule rerun
-            time.sleep(1)
-            counter -= 1
-
-            if counter <= 0:
-                st.experimental_rerun()
-else:
-    st.error("No data files found. Please make sure the data extraction script has generated at least one CSV file.")
-
-    if st.button("Retry"):
+    
+    # Set up auto-refresh if enabled
+    if refresh_interval:
         st.experimental_rerun()
+
+if __name__ == "__main__":
+    create_dashboard()
