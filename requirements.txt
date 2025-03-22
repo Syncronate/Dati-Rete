@@ -1,8 +1,8 @@
-streamlit
-pandas
-plotly
-plotly-express
-folium
-streamlit-folium
-numpy
-pytz
+# Requisiti per lo script di raccolta dati
+requests>=2.28.0
+urllib3>=1.26.0
+
+# Requisiti per il dashboard Streamlit
+streamlit>=1.26.0
+pandas>=1.5.0
+plotly>=5.13.0
