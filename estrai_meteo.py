@@ -3,7 +3,7 @@ import json
 import csv
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 import sys
 import urllib3
 
@@ -30,11 +30,24 @@ def estrai_dati_meteo():
     ]
     sensori_interessati_tipoSens = [0, 1, 5, 6, 9, 10, 100]
     
-    # Check if file exists to determine if we need to write headers
+    # Check if file exists
     file_exists = os.path.isfile(nome_file_csv)
     
-    # Dictionary to store CSV headers for consistency in append operations
-    headers_map = {}
+    # Variable to store current headers in the CSV file
+    intestazione_attuale = []
+    
+    # If file exists, read the current headers
+    if file_exists:
+        try:
+            with open(nome_file_csv, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.reader(csvfile)
+                intestazione_attuale = next(reader)  # Get the first row (headers)
+                print(f"File esistente trovato con intestazioni: {intestazione_attuale}")
+        except Exception as e:
+            print(f"Errore nella lettura del file esistente: {e}")
+            # If there's an error reading the file, treat it as if it doesn't exist
+            file_exists = False
+            intestazione_attuale = []
     
     print(f"Iniziando il monitoraggio dei dati meteo. I dati saranno salvati in: {nome_file_csv}")
     print(f"Il programma aggiornerà i dati ogni 15 minuti. Premi Ctrl+C per terminare.")
@@ -95,18 +108,20 @@ def estrai_dati_meteo():
                     continue
                 
                 # Build the final CSV header (sort sensor types)
-                intestazione_csv = ['Data_Ora']
-                intestazione_csv.extend(sorted(list(tipi_sensori_presenti)))
+                nuova_intestazione = ['Data_Ora']
+                nuova_intestazione.extend(sorted(list(tipi_sensori_presenti)))
                 
-                # If first run or headers changed, store headers
-                if not file_exists or headers_map != intestazione_csv:
-                    headers_map = intestazione_csv
+                # Check if headers have changed
+                headers_changed = False
+                if not file_exists or nuova_intestazione != intestazione_attuale:
+                    headers_changed = True
+                    print("Le intestazioni sono cambiate o il file non esiste. Creando un nuovo file...")
                 
                 # Create a single row with current time and all station data
                 riga_dati = [formatted_time]
                 
                 # Add data for each sensor from all stations
-                for sensore_header in intestazione_csv[1:]:  # Skip Data_Ora column
+                for sensore_header in nuova_intestazione[1:]:  # Skip Data_Ora column
                     values = []
                     for nome_stazione in stazioni_interessate:
                         if nome_stazione in dati_per_stazione:
@@ -127,18 +142,21 @@ def estrai_dati_meteo():
                     else:
                         riga_dati.append('N/A')
                 
-                # Write to CSV file
-                mode = 'a' if file_exists else 'w'
-                with open(nome_file_csv, mode, newline='', encoding='utf-8') as csvfile:
-                    csv_writer = csv.writer(csvfile)
-                    
-                    # Write header if file is new or headers changed
-                    if not file_exists:
-                        csv_writer.writerow(intestazione_csv)
+                # If headers have changed, create a new file
+                if headers_changed:
+                    mode = 'w'  # Write mode (creates a new file or overwrites existing file)
+                    with open(nome_file_csv, mode, newline='', encoding='utf-8') as csvfile:
+                        csv_writer = csv.writer(csvfile)
+                        csv_writer.writerow(nuova_intestazione)
+                        csv_writer.writerow(riga_dati)
+                        print(f"Nuovo file CSV creato con intestazioni aggiornate: {nuova_intestazione}")
+                        intestazione_attuale = nuova_intestazione
                         file_exists = True
-                    
-                    # Write the data row
-                    csv_writer.writerow(riga_dati)
+                else:
+                    # Append to existing file
+                    with open(nome_file_csv, 'a', newline='', encoding='utf-8') as csvfile:
+                        csv_writer = csv.writer(csvfile)
+                        csv_writer.writerow(riga_dati)
                 
                 print(f"Dati meteo aggiornati in: {nome_file_csv}")
                 
@@ -150,7 +168,8 @@ def estrai_dati_meteo():
                 print(f"Errore generico: {e}")
             
             # Wait for 15 minutes before the next update
-            print(f"Prossimo aggiornamento alle {(datetime.now() + time.timedelta(minutes=15)).strftime('%H:%M')}")
+            next_update = datetime.now() + timedelta(minutes=15)
+            print(f"Prossimo aggiornamento alle {next_update.strftime('%H:%M')}")
             time.sleep(15 * 60)  # 15 minutes in seconds
             
     except KeyboardInterrupt:
