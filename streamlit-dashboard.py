@@ -79,7 +79,9 @@ def load_data():
     try:
         df = pd.read_csv(file_path)
         # Convert Data_Ora to datetime
-        df['Data_Ora'] = pd.to_datetime(df['Data_Ora'], format='%d/%m/%Y %H:%M')
+        df['Data_Ora'] = pd.to_datetime(df['Data_Ora'], format='%d/%m/%Y %H:%M', errors='coerce')
+        # Drop rows with invalid dates
+        df = df.dropna(subset=['Data_Ora'])
         return df
     except Exception as e:
         st.error(f"Errore nel caricamento dei dati: {e}")
@@ -89,31 +91,51 @@ def create_time_filter(df):
     """Create time filter widgets"""
     st.sidebar.markdown("### Filtro Temporale")
     
-    # Get min and max dates from data
-    min_date = df['Data_Ora'].min().date()
-    max_date = df['Data_Ora'].max().date()
+    # Check if DataFrame is empty or has no valid dates
+    if df.empty or 'Data_Ora' not in df.columns:
+        st.error("Nessun dato disponibile per il filtro temporale.")
+        return df
     
-    # Date range selector
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        start_date = st.date_input("Data Inizio", 
-                                  value=max_date - timedelta(days=1),
-                                  min_value=min_date,
-                                  max_value=max_date)
-    with col2:
-        end_date = st.date_input("Data Fine", 
-                               value=max_date,
-                               min_value=min_date,
-                               max_value=max_date)
+    # Handle potentially empty DataFrames gracefully
+    try:
+        # Get min and max dates from data
+        min_date = df['Data_Ora'].min().date()
+        max_date = df['Data_Ora'].max().date()
+        
+        # Default date values (handle case where dates might be NaT)
+        default_end_date = max_date if pd.notna(max_date) else datetime.now().date()
+        default_start_date = (default_end_date - timedelta(days=1)) if pd.notna(max_date) else (datetime.now().date() - timedelta(days=1))
+        
+        # Date range selector
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            start_date = st.date_input(
+                "Data Inizio", 
+                value=default_start_date,
+                min_value=min_date if pd.notna(min_date) else None,
+                max_value=default_end_date
+            )
+        with col2:
+            end_date = st.date_input(
+                "Data Fine", 
+                value=default_end_date,
+                min_value=min_date if pd.notna(min_date) else None,
+                max_value=default_end_date
+            )
+        
+        # Convert back to datetime for filtering
+        start_datetime = datetime.combine(start_date, datetime.min.time())
+        end_datetime = datetime.combine(end_date, datetime.max.time())
+        
+        # Filter data based on selected date range
+        filtered_df = df[(df['Data_Ora'] >= start_datetime) & (df['Data_Ora'] <= end_datetime)]
+        
+        return filtered_df
     
-    # Convert back to datetime for filtering
-    start_datetime = datetime.combine(start_date, datetime.min.time())
-    end_datetime = datetime.combine(end_date, datetime.max.time())
-    
-    # Filter data based on selected date range
-    filtered_df = df[(df['Data_Ora'] >= start_datetime) & (df['Data_Ora'] <= end_datetime)]
-    
-    return filtered_df
+    except Exception as e:
+        st.error(f"Errore nel filtro temporale: {e}")
+        st.write("Mostrando tutti i dati disponibili.")
+        return df
 
 def identify_data_columns(df):
     """Identify different types of data columns"""
@@ -145,7 +167,7 @@ def identify_data_columns(df):
 
 def plot_time_series(df, columns, title, y_axis_title, color_sequence=None):
     """Create a time series plot for selected columns"""
-    if not columns:
+    if not columns or df.empty:
         return None
     
     fig = go.Figure()
@@ -183,60 +205,68 @@ def plot_time_series(df, columns, title, y_axis_title, color_sequence=None):
 def display_latest_metrics(df, data_cols):
     """Display the latest metrics in cards"""
     if df.empty:
+        st.warning("Nessun dato disponibile per mostrare le metriche attuali.")
         return
     
-    latest_data = df.iloc[-1].to_dict()
-    
-    # Get the latest timestamp
-    latest_time = latest_data['Data_Ora']
-    st.markdown(f"### Ultimo aggiornamento: {latest_time.strftime('%d/%m/%Y %H:%M')}")
-    
-    # Create metric cards for different data types
-    categories = {
-        'Temperatura': data_cols['temperature'],
-        'Precipitazioni': data_cols['precipitation'],
-        'Vento': data_cols['wind'],
-        'Umidità': data_cols['humidity'],
-        'Pressione': data_cols['pressure']
-    }
-    
-    for category, cols in categories.items():
-        if cols:
-            st.markdown(f"#### {category}")
-            cols_per_row = 3
-            for i in range(0, len(cols), cols_per_row):
-                curr_cols = cols[i:i+cols_per_row]
-                cols_for_ui = st.columns(len(curr_cols))
-                
-                for j, col in enumerate(curr_cols):
-                    value = latest_data.get(col)
-                    if value == 'N/A':
-                        value = "N/A"
-                    elif isinstance(value, (int, float)) or (isinstance(value, str) and value.replace('.', '', 1).isdigit()):
-                        try:
-                            value = float(value)
-                            value = f"{value:.1f}"
-                        except:
-                            pass
+    try:
+        latest_data = df.iloc[-1].to_dict()
+        
+        # Get the latest timestamp
+        latest_time = latest_data['Data_Ora']
+        if pd.isna(latest_time):
+            st.warning("Timestamp non disponibile per l'ultimo aggiornamento.")
+            return
+            
+        st.markdown(f"### Ultimo aggiornamento: {latest_time.strftime('%d/%m/%Y %H:%M')}")
+        
+        # Create metric cards for different data types
+        categories = {
+            'Temperatura': data_cols['temperature'],
+            'Precipitazioni': data_cols['precipitation'],
+            'Vento': data_cols['wind'],
+            'Umidità': data_cols['humidity'],
+            'Pressione': data_cols['pressure']
+        }
+        
+        for category, cols in categories.items():
+            if cols:
+                st.markdown(f"#### {category}")
+                cols_per_row = 3
+                for i in range(0, len(cols), cols_per_row):
+                    curr_cols = cols[i:i+cols_per_row]
+                    cols_for_ui = st.columns(len(curr_cols))
                     
-                    # Extract unit from column name if present
-                    unit = ""
-                    if "(" in col and ")" in col:
-                        unit = col.split("(")[1].split(")")[0]
-                    
-                    # Pretty display name
-                    display_name = col.split(" (")[0] if " (" in col else col
-                    
-                    with cols_for_ui[j]:
-                        st.markdown(
-                            f"""
-                            <div class="metric-card">
-                                <div class="metric-value">{value} {unit}</div>
-                                <div class="metric-label">{display_name}</div>
-                            </div>
-                            """,
-                            unsafe_allow_html=True
-                        )
+                    for j, col in enumerate(curr_cols):
+                        value = latest_data.get(col)
+                        if value == 'N/A' or pd.isna(value):
+                            value = "N/A"
+                        elif isinstance(value, (int, float)) or (isinstance(value, str) and value.replace('.', '', 1).isdigit()):
+                            try:
+                                value = float(value)
+                                value = f"{value:.1f}"
+                            except:
+                                pass
+                        
+                        # Extract unit from column name if present
+                        unit = ""
+                        if "(" in col and ")" in col:
+                            unit = col.split("(")[1].split(")")[0]
+                        
+                        # Pretty display name
+                        display_name = col.split(" (")[0] if " (" in col else col
+                        
+                        with cols_for_ui[j]:
+                            st.markdown(
+                                f"""
+                                <div class="metric-card">
+                                    <div class="metric-value">{value} {unit}</div>
+                                    <div class="metric-label">{display_name}</div>
+                                </div>
+                                """,
+                                unsafe_allow_html=True
+                            )
+    except Exception as e:
+        st.error(f"Errore nella visualizzazione delle metriche: {e}")
 
 def create_dashboard():
     """Create the Streamlit dashboard"""
@@ -245,7 +275,8 @@ def create_dashboard():
     
     # Load data
     df = load_data()
-    if df is None:
+    if df is None or df.empty:
+        st.error("Nessun dato disponibile. Assicurati che il file CSV esista e contenga dati validi.")
         return
     
     # Sidebar
@@ -260,11 +291,15 @@ def create_dashboard():
     
     if refresh_interval:
         st.sidebar.markdown(f"La dashboard si aggiornerà ogni {refresh_interval} minuti.")
-        st.experimental_memo.clear()
+        st.cache_data.clear()
         
     # Time filter
     filtered_df = create_time_filter(df)
     
+    if filtered_df.empty:
+        st.warning("Nessun dato disponibile nel periodo selezionato.")
+        return
+        
     # Identify data columns
     data_cols = identify_data_columns(filtered_df)
     
@@ -297,7 +332,10 @@ def create_dashboard():
             'Temperatura (°C)',
             color_sequences['temperature']
         )
-        st.plotly_chart(temp_fig, use_container_width=True)
+        if temp_fig:
+            st.plotly_chart(temp_fig, use_container_width=True)
+        else:
+            st.info("Nessun dato di temperatura disponibile per il grafico.")
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Plot precipitation data
@@ -310,7 +348,10 @@ def create_dashboard():
             'Precipitazioni (mm)',
             color_sequences['precipitation']
         )
-        st.plotly_chart(precip_fig, use_container_width=True)
+        if precip_fig:
+            st.plotly_chart(precip_fig, use_container_width=True)
+        else:
+            st.info("Nessun dato di precipitazioni disponibile per il grafico.")
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Plot other data types
@@ -330,7 +371,10 @@ def create_dashboard():
                 y_axis,
                 color_sequences[data_type]
             )
-            st.plotly_chart(fig, use_container_width=True)
+            if fig:
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info(f"Nessun dato di {data_type} disponibile per il grafico.")
             st.markdown('</div>', unsafe_allow_html=True)
     
     # Plot other columns if any
@@ -353,7 +397,10 @@ def create_dashboard():
                 'Valore',
                 color_sequences['other']
             )
-            st.plotly_chart(other_fig, use_container_width=True)
+            if other_fig:
+                st.plotly_chart(other_fig, use_container_width=True)
+            else:
+                st.info("Nessun dato disponibile per il grafico.")
         st.markdown('</div>', unsafe_allow_html=True)
     
     # Add a data table section
